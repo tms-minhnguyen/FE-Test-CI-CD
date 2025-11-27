@@ -22,6 +22,9 @@ pipeline {
                     echo "Building FE application..."
                     // Thêm các bước build FE của bạn ở đây
                     // Ví dụ: npm install, npm run build, etc.
+                    sh 'npm install'
+                    sh 'npm run build'
+                    sh 'npm start'
                 }
             }
         }
