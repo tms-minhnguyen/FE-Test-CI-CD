@@ -3,9 +3,8 @@ pipeline {
 
     environment {
         NODE_ENV = 'production'
-        NVM_DIR = "${env.HOME}/.nvm"
-        NODE_PATH = "${env.HOME}/.nvm/versions/node/v20.19.6"
-        PATH = "${env.HOME}/.nvm/versions/node/v20.19.6/bin:${env.PATH}"
+        NODE_BIN = '/Users/phinguyen/.nvm/versions/node/v20.19.6/bin'
+        PATH = "/Users/phinguyen/.nvm/versions/node/v20.19.6/bin:${env.PATH}"
     }
 
     stages {
@@ -25,25 +24,20 @@ pipeline {
             }
         }
 
-        stage('Setup Node.js') {
+        stage('Verify Environment') {
             steps {
                 script {
-                    echo "📋 Setting up Node.js environment..."
-                    sh '''
-                        export NVM_DIR="$HOME/.nvm"
-                        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || true
-                        [ -s "$HOME/.zshrc" ] && source "$HOME/.zshrc" || true
-                        [ -s "$HOME/.bash_profile" ] && source "$HOME/.bash_profile" || true
-                        
+                    echo "📋 Verifying Node.js environment..."
+                    sh """
                         echo "Node.js version:"
-                        node --version || echo "Node not found"
+                        ${env.NODE_BIN}/node --version
                         echo "NPM version:"
-                        npm --version || echo "NPM not found"
+                        ${env.NODE_BIN}/npm --version
                         echo "Node.js path:"
-                        which node || echo "Node path not found"
+                        which node || echo "Using direct path: ${env.NODE_BIN}/node"
                         echo "NPM path:"
-                        which npm || echo "NPM path not found"
-                    '''
+                        which npm || echo "Using direct path: ${env.NODE_BIN}/npm"
+                    """
                 }
             }
         }
@@ -52,14 +46,7 @@ pipeline {
             steps {
                 script {
                     echo "📦 Installing dependencies..."
-                    sh '''
-                        export NVM_DIR="$HOME/.nvm"
-                        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || true
-                        [ -s "$HOME/.zshrc" ] && source "$HOME/.zshrc" || true
-                        [ -s "$HOME/.bash_profile" ] && source "$HOME/.bash_profile" || true
-                        
-                        npm ci --prefer-offline --no-audit
-                    '''
+                    sh "${env.NODE_BIN}/npm ci --prefer-offline --no-audit"
                 }
             }
         }
@@ -68,14 +55,7 @@ pipeline {
             steps {
                 script {
                     echo "🔍 Running linter..."
-                    sh '''
-                        export NVM_DIR="$HOME/.nvm"
-                        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || true
-                        [ -s "$HOME/.zshrc" ] && source "$HOME/.zshrc" || true
-                        [ -s "$HOME/.bash_profile" ] && source "$HOME/.bash_profile" || true
-                        
-                        npm run lint || echo "Lint completed with warnings"
-                    '''
+                    sh "${env.NODE_BIN}/npm run lint || echo 'Lint completed with warnings'"
                 }
             }
         }
@@ -84,14 +64,7 @@ pipeline {
             steps {
                 script {
                     echo "🔨 Building application..."
-                    sh '''
-                        export NVM_DIR="$HOME/.nvm"
-                        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || true
-                        [ -s "$HOME/.zshrc" ] && source "$HOME/.zshrc" || true
-                        [ -s "$HOME/.bash_profile" ] && source "$HOME/.bash_profile" || true
-                        
-                        npm run build
-                    '''
+                    sh "${env.NODE_BIN}/npm run build"
                     echo "✅ Build completed successfully!"
                 }
             }
