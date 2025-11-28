@@ -9,8 +9,14 @@ pipeline {
         stage('Checkout FE') {
             steps {
                 script {
-                    echo "Building FE for PR: ${env.CHANGE_ID}"
-                    echo "Branch: ${env.CHANGE_BRANCH}"
+                    if (env.CHANGE_ID) {
+                        echo "🔵 Building FE for PR #${env.CHANGE_ID}"
+                        echo "   PR Branch: ${env.CHANGE_BRANCH}"
+                        echo "   Target Branch: ${env.CHANGE_TARGET}"
+                        echo "   PR URL: ${env.CHANGE_URL}"
+                    } else {
+                        echo "🔵 Building FE for branch: ${env.BRANCH_NAME}"
+                    }
                 }
                 checkout scm
             }
@@ -19,19 +25,22 @@ pipeline {
         stage('Build FE') {
             steps {
                 script {
-                    echo "Building FE application..."
-                    // Thêm các bước build FE của bạn ở đây
-                    // Ví dụ: npm install, npm run build, etc.
+                    echo "📦 Installing dependencies..."
                     sh 'npm install'
+                    
+                    echo "🔨 Building application..."
                     sh 'npm run build'
-                    sh 'npm start'
+                    
+                    // Note: npm start chạy server, thường không cần trong CI
+                    // Chỉ dùng nếu cần server để chạy tests
+                    // sh 'npm start &'
+                    // sh 'sleep 5'
                 }
             }
         }
 
         stage('Trigger Automation Test') {
             when {
-                // Chỉ trigger khi có PR
                 expression { env.CHANGE_ID != null }
             }
             steps {
@@ -41,20 +50,17 @@ pipeline {
                     
                     echo "🚀 Triggering automation test for PR #${prNumber} (branch: ${prBranch})"
                     
-                    // Trigger automation test job
                     def testJob = Jenkins.instance.getItem(env.AUTOTEST_JOB_NAME)
                     if (testJob == null) {
                         error("Automation test job '${env.AUTOTEST_JOB_NAME}' not found!")
                     }
                     
-                    // Tạo parameters
                     def buildParams = [
                         new hudson.model.StringParameterValue('PR_NUMBER', prNumber.toString()),
                         new hudson.model.StringParameterValue('PR_BRANCH', prBranch)
                     ]
                     def paramAction = new hudson.model.ParametersAction(buildParams)
                     
-                    // Trigger build
                     def cause = new hudson.model.Cause.UpstreamCause(currentBuild)
                     def scheduled = testJob.scheduleBuild(0, cause, paramAction)
                     
@@ -65,6 +71,18 @@ pipeline {
                     }
                 }
             }
+        }
+    }
+    
+    post {
+        always {
+            echo "🏁 Build completed for ${env.CHANGE_ID ? "PR #${env.CHANGE_ID}" : "branch ${env.BRANCH_NAME}"}"
+        }
+        success {
+            echo "✅ Build successful!"
+        }
+        failure {
+            echo "❌ Build failed!"
         }
     }
 }
