@@ -1,14 +1,11 @@
 pipeline {
-    agent {
-        docker {
-            image 'node:18-alpine'
-            args '-v /root/.npm:/root/.npm -v /tmp:/tmp'
-            reuseNode true
-        }
-    }
+    agent any
 
     environment {
         NODE_ENV = 'production'
+        NVM_DIR = "${env.HOME}/.nvm"
+        NODE_PATH = "${env.HOME}/.nvm/versions/node/v20.19.6"
+        PATH = "${env.HOME}/.nvm/versions/node/v20.19.6/bin:${env.PATH}"
     }
 
     stages {
@@ -28,12 +25,25 @@ pipeline {
             }
         }
 
-        stage('Verify Environment') {
+        stage('Setup Node.js') {
             steps {
                 script {
-                    echo "📋 Environment Information:"
-                    sh 'node --version'
-                    sh 'npm --version'
+                    echo "📋 Setting up Node.js environment..."
+                    sh '''
+                        export NVM_DIR="$HOME/.nvm"
+                        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || true
+                        [ -s "$HOME/.zshrc" ] && source "$HOME/.zshrc" || true
+                        [ -s "$HOME/.bash_profile" ] && source "$HOME/.bash_profile" || true
+                        
+                        echo "Node.js version:"
+                        node --version || echo "Node not found"
+                        echo "NPM version:"
+                        npm --version || echo "NPM not found"
+                        echo "Node.js path:"
+                        which node || echo "Node path not found"
+                        echo "NPM path:"
+                        which npm || echo "NPM path not found"
+                    '''
                 }
             }
         }
@@ -42,7 +52,14 @@ pipeline {
             steps {
                 script {
                     echo "📦 Installing dependencies..."
-                    sh 'npm ci --prefer-offline --no-audit'
+                    sh '''
+                        export NVM_DIR="$HOME/.nvm"
+                        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || true
+                        [ -s "$HOME/.zshrc" ] && source "$HOME/.zshrc" || true
+                        [ -s "$HOME/.bash_profile" ] && source "$HOME/.bash_profile" || true
+                        
+                        npm ci --prefer-offline --no-audit
+                    '''
                 }
             }
         }
@@ -51,7 +68,14 @@ pipeline {
             steps {
                 script {
                     echo "🔍 Running linter..."
-                    sh 'npm run lint || echo "Lint completed with warnings"'
+                    sh '''
+                        export NVM_DIR="$HOME/.nvm"
+                        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || true
+                        [ -s "$HOME/.zshrc" ] && source "$HOME/.zshrc" || true
+                        [ -s "$HOME/.bash_profile" ] && source "$HOME/.bash_profile" || true
+                        
+                        npm run lint || echo "Lint completed with warnings"
+                    '''
                 }
             }
         }
@@ -60,7 +84,14 @@ pipeline {
             steps {
                 script {
                     echo "🔨 Building application..."
-                    sh 'npm run build'
+                    sh '''
+                        export NVM_DIR="$HOME/.nvm"
+                        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" || true
+                        [ -s "$HOME/.zshrc" ] && source "$HOME/.zshrc" || true
+                        [ -s "$HOME/.bash_profile" ] && source "$HOME/.bash_profile" || true
+                        
+                        npm run build
+                    '''
                     echo "✅ Build completed successfully!"
                 }
             }
