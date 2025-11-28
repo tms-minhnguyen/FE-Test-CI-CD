@@ -47,6 +47,9 @@ pipeline {
                 script {
                     echo "📦 Installing dependencies..."
                     sh "${env.NODE_BIN}/npm ci --legacy-peer-deps --prefer-offline --no-audit"
+                    
+                    echo "📦 Installing TypeScript and type definitions..."
+                    sh "${env.NODE_BIN}/npm install --save-dev --legacy-peer-deps typescript @types/react @types/node @types/react-dom || true"
                 }
             }
         }
