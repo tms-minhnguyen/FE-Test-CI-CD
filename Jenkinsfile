@@ -33,10 +33,6 @@ pipeline {
                         ${env.NODE_BIN}/node --version
                         echo "NPM version:"
                         ${env.NODE_BIN}/npm --version
-                        echo "Node.js path:"
-                        which node || echo "Using direct path: ${env.NODE_BIN}/node"
-                        echo "NPM path:"
-                        which npm || echo "Using direct path: ${env.NODE_BIN}/npm"
                     """
                 }
             }
@@ -46,10 +42,7 @@ pipeline {
             steps {
                 script {
                     echo "📦 Installing dependencies..."
-                    sh "${env.NODE_BIN}/npm ci --legacy-peer-deps --prefer-offline --no-audit"
-                    
-                    echo "📦 Installing TypeScript and type definitions..."
-                    sh "${env.NODE_BIN}/npm install --save-dev --legacy-peer-deps typescript @types/react @types/node @types/react-dom || true"
+                    sh "${env.NODE_BIN}/npm install --legacy-peer-deps --prefer-offline --no-audit"
                 }
             }
         }
