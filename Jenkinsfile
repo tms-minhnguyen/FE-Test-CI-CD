@@ -2,7 +2,6 @@ pipeline {
     agent any
 
     environment {
-        NODE_ENV = 'production'
         NODE_BIN = '/Users/phinguyen/.nvm/versions/node/v20.19.6/bin'
         PATH = "/Users/phinguyen/.nvm/versions/node/v20.19.6/bin:${env.PATH}"
     }
@@ -29,10 +28,9 @@ pipeline {
                 script {
                     echo "📋 Verifying Node.js environment..."
                     sh """
-                        echo "Node.js version:"
-                        ${env.NODE_BIN}/node --version
-                        echo "NPM version:"
-                        ${env.NODE_BIN}/npm --version
+                        echo "Node.js: \$(${env.NODE_BIN}/node --version)"
+                        echo "NPM: \$(${env.NODE_BIN}/npm --version)"
+                        echo "Working directory: \$(pwd)"
                     """
                 }
             }
@@ -42,7 +40,21 @@ pipeline {
             steps {
                 script {
                     echo "📦 Installing dependencies..."
-                    sh "${env.NODE_BIN}/npm install --legacy-peer-deps --prefer-offline --no-audit"
+                    sh """
+                        # Ensure devDependencies are installed by unsetting NODE_ENV
+                        unset NODE_ENV || true
+                        ${env.NODE_BIN}/npm install --legacy-peer-deps --prefer-offline --no-audit
+                        
+                        # Verify critical packages are installed
+                        echo "Verifying installed packages:"
+                        ${env.NODE_BIN}/npm list typescript @types/react @types/node @types/react-dom 2>/dev/null || echo "Warning: Some packages check failed"
+                        
+                        # Double-check TypeScript is available
+                        if [ ! -f "node_modules/typescript/bin/tsc" ]; then
+                            echo "ERROR: TypeScript not found, installing explicitly..."
+                            ${env.NODE_BIN}/npm install --save-dev --legacy-peer-deps typescript @types/react @types/node @types/react-dom
+                        fi
+                    """
                 }
             }
         }
@@ -51,7 +63,7 @@ pipeline {
             steps {
                 script {
                     echo "🔍 Running linter..."
-                    sh "${env.NODE_BIN}/npm run lint || echo 'Lint completed with warnings'"
+                    sh "${env.NODE_BIN}/npm run lint || echo '⚠️ Lint completed with warnings'"
                 }
             }
         }
@@ -60,7 +72,10 @@ pipeline {
             steps {
                 script {
                     echo "🔨 Building application..."
-                    sh "${env.NODE_BIN}/npm run build"
+                    sh """
+                        # Set NODE_ENV=production only for build
+                        NODE_ENV=production ${env.NODE_BIN}/npm run build
+                    """
                     echo "✅ Build completed successfully!"
                 }
             }
