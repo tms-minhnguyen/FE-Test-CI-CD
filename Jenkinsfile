@@ -46,7 +46,7 @@ pipeline {
             steps {
                 script {
                     echo "📦 Installing dependencies..."
-                    sh "${env.NODE_BIN}/npm ci --prefer-offline --no-audit"
+                    sh "${env.NODE_BIN}/npm ci --legacy-peer-deps --prefer-offline --no-audit"
                 }
             }
         }
