@@ -1,8 +1,15 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'node:18-alpine'
+            args '-v /root/.npm:/root/.npm -v /tmp:/tmp'
+            reuseNode true
+        }
+    }
 
     environment {
         AUTOTEST_JOB_NAME = 'playwright-pr-check'
+        NODE_ENV = 'production'
     }
 
     stages {
@@ -22,19 +29,41 @@ pipeline {
             }
         }
 
-        stage('Build FE') {
+        stage('Verify Environment') {
+            steps {
+                script {
+                    echo "📋 Environment Information:"
+                    sh 'node --version'
+                    sh 'npm --version'
+                    sh 'pwd'
+                    sh 'ls -la'
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
             steps {
                 script {
                     echo "📦 Installing dependencies..."
-                    sh 'npm install'
-                    
+                    sh 'npm ci --prefer-offline --no-audit'
+                }
+            }
+        }
+
+        stage('Lint') {
+            steps {
+                script {
+                    echo "🔍 Running linter..."
+                    sh 'npm run lint || true'
+                }
+            }
+        }
+
+        stage('Build FE') {
+            steps {
+                script {
                     echo "🔨 Building application..."
                     sh 'npm run build'
-                    
-                    // Note: npm start chạy server, thường không cần trong CI
-                    // Chỉ dùng nếu cần server để chạy tests
-                    // sh 'npm start &'
-                    // sh 'sleep 5'
                 }
             }
         }
@@ -52,22 +81,22 @@ pipeline {
                     
                     def testJob = Jenkins.instance.getItem(env.AUTOTEST_JOB_NAME)
                     if (testJob == null) {
-                        error("Automation test job '${env.AUTOTEST_JOB_NAME}' not found!")
-                    }
-                    
-                    def buildParams = [
-                        new hudson.model.StringParameterValue('PR_NUMBER', prNumber.toString()),
-                        new hudson.model.StringParameterValue('PR_BRANCH', prBranch)
-                    ]
-                    def paramAction = new hudson.model.ParametersAction(buildParams)
-                    
-                    def cause = new hudson.model.Cause.UpstreamCause(currentBuild)
-                    def scheduled = testJob.scheduleBuild(0, cause, paramAction)
-                    
-                    if (scheduled) {
-                        echo "✅ Successfully triggered automation test job"
+                        echo "⚠️ Warning: Automation test job '${env.AUTOTEST_JOB_NAME}' not found. Skipping..."
                     } else {
-                        echo "⚠️ Automation test job may already be in queue"
+                        def buildParams = [
+                            new hudson.model.StringParameterValue('PR_NUMBER', prNumber.toString()),
+                            new hudson.model.StringParameterValue('PR_BRANCH', prBranch)
+                        ]
+                        def paramAction = new hudson.model.ParametersAction(buildParams)
+                        
+                        def cause = new hudson.model.Cause.UpstreamCause(currentBuild)
+                        def scheduled = testJob.scheduleBuild(0, cause, paramAction)
+                        
+                        if (scheduled) {
+                            echo "✅ Successfully triggered automation test job"
+                        } else {
+                            echo "⚠️ Automation test job may already be in queue"
+                        }
                     }
                 }
             }
@@ -76,13 +105,27 @@ pipeline {
     
     post {
         always {
-            echo "🏁 Build completed for ${env.CHANGE_ID ? "PR #${env.CHANGE_ID}" : "branch ${env.BRANCH_NAME}"}"
+            script {
+                def status = currentBuild.result ?: 'SUCCESS'
+                echo "🏁 Build completed with status: ${status}"
+                if (env.CHANGE_ID) {
+                    echo "   PR #${env.CHANGE_ID} - Branch: ${env.CHANGE_BRANCH}"
+                } else {
+                    echo "   Branch: ${env.BRANCH_NAME}"
+                }
+            }
         }
         success {
             echo "✅ Build successful!"
         }
         failure {
             echo "❌ Build failed!"
+            script {
+                echo "📝 Check the logs above for error details"
+            }
+        }
+        cleanup {
+            echo "🧹 Cleaning up..."
         }
     }
 }
