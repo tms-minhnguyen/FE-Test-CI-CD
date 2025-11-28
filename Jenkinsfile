@@ -122,7 +122,6 @@ pipeline {
                             
                         } catch (Exception e) {
                             echo "❌ Failed to trigger automation tests: ${e.getMessage()}"
-                            echo "   Error details: ${e.getStackTrace().join('\n')}"
                             
                             def errorComment = """
 ## 🤖 Automation Test Error
@@ -141,7 +140,7 @@ pipeline {
                     } else {
                         echo "ℹ️ No feature detected in branch: ${branchName}"
                         echo "   Expected format: feat/<feature-name>"
-                        echo "   Example: feat/login, feat/user-profile, feat/survey-form"
+                        echo "   Example: feat/login, feat/user-profile"
                     }
                 }
             }
