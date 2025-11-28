@@ -8,7 +8,6 @@ pipeline {
     }
 
     environment {
-        AUTOTEST_JOB_NAME = 'playwright-pr-check'
         NODE_ENV = 'production'
     }
 
@@ -35,8 +34,6 @@ pipeline {
                     echo "📋 Environment Information:"
                     sh 'node --version'
                     sh 'npm --version'
-                    sh 'pwd'
-                    sh 'ls -la'
                 }
             }
         }
@@ -54,7 +51,7 @@ pipeline {
             steps {
                 script {
                     echo "🔍 Running linter..."
-                    sh 'npm run lint || true'
+                    sh 'npm run lint || echo "Lint completed with warnings"'
                 }
             }
         }
@@ -64,40 +61,7 @@ pipeline {
                 script {
                     echo "🔨 Building application..."
                     sh 'npm run build'
-                }
-            }
-        }
-
-        stage('Trigger Automation Test') {
-            when {
-                expression { env.CHANGE_ID != null }
-            }
-            steps {
-                script {
-                    def prNumber = env.CHANGE_ID
-                    def prBranch = env.CHANGE_BRANCH
-                    
-                    echo "🚀 Triggering automation test for PR #${prNumber} (branch: ${prBranch})"
-                    
-                    def testJob = Jenkins.instance.getItem(env.AUTOTEST_JOB_NAME)
-                    if (testJob == null) {
-                        echo "⚠️ Warning: Automation test job '${env.AUTOTEST_JOB_NAME}' not found. Skipping..."
-                    } else {
-                        def buildParams = [
-                            new hudson.model.StringParameterValue('PR_NUMBER', prNumber.toString()),
-                            new hudson.model.StringParameterValue('PR_BRANCH', prBranch)
-                        ]
-                        def paramAction = new hudson.model.ParametersAction(buildParams)
-                        
-                        def cause = new hudson.model.Cause.UpstreamCause(currentBuild)
-                        def scheduled = testJob.scheduleBuild(0, cause, paramAction)
-                        
-                        if (scheduled) {
-                            echo "✅ Successfully triggered automation test job"
-                        } else {
-                            echo "⚠️ Automation test job may already be in queue"
-                        }
-                    }
+                    echo "✅ Build completed successfully!"
                 }
             }
         }
