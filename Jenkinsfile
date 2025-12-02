@@ -21,16 +21,36 @@ pipeline {
                         echo "   Target Branch: ${env.CHANGE_TARGET}"
                         echo "   PR URL: ${env.CHANGE_URL}"
                         
-                        // Extract repo owner and name from PR URL
+                        // Extract repo owner and name from PR URL or git remote
+                        def repoInfo = null
                         if (env.CHANGE_URL) {
-                            def repoInfo = extractRepoInfoFromPRUrl(env.CHANGE_URL)
+                            echo "   🔍 Attempting to extract repo info from PR URL: ${env.CHANGE_URL}"
+                            repoInfo = extractRepoInfoFromPRUrl(env.CHANGE_URL)
                             if (repoInfo) {
-                                env.GITHUB_REPO_OWNER = repoInfo.owner
-                                env.GITHUB_REPO_NAME = repoInfo.repo
                                 echo "   ✅ Extracted repo info from PR URL: ${repoInfo.owner}/${repoInfo.repo}"
                             } else {
-                                echo "   ⚠️ Could not extract repo info from PR URL, using defaults"
+                                echo "   ⚠️ Could not extract repo info from PR URL"
                             }
+                        }
+                        
+                        // Fallback: try to get from git remote if PR URL parsing failed
+                        if (!repoInfo) {
+                            echo "   🔍 Attempting to extract repo info from git remote..."
+                            repoInfo = extractRepoInfoFromGitRemote()
+                            if (repoInfo) {
+                                echo "   ✅ Extracted repo info from git remote: ${repoInfo.owner}/${repoInfo.repo}"
+                            } else {
+                                echo "   ⚠️ Could not extract repo info from git remote, using defaults"
+                            }
+                        }
+                        
+                        // Override environment variables if repo info was found
+                        if (repoInfo) {
+                            env.GITHUB_REPO_OWNER = repoInfo.owner
+                            env.GITHUB_REPO_NAME = repoInfo.repo
+                            echo "   📌 Using repo: ${env.GITHUB_REPO_OWNER}/${env.GITHUB_REPO_NAME}"
+                        } else {
+                            echo "   📌 Using default repo: ${env.GITHUB_REPO_OWNER}/${env.GITHUB_REPO_NAME}"
                         }
                         
                         // Create GitHub Check Run with "in_progress" status
@@ -1011,6 +1031,11 @@ def parseJUnitXml(String xmlPath) {
 
 def extractRepoInfoFromPRUrl(prUrl) {
     try {
+        if (!prUrl || prUrl.trim() == '') {
+            echo "   ⚠️ PR URL is empty or null"
+            return null
+        }
+        
         // PR URL format: https://github.com/owner/repo/pull/49
         // or: https://github.com/owner/repo/pull/49/
         def urlPattern = ~/https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/pull\/\d+/
@@ -1023,10 +1048,47 @@ def extractRepoInfoFromPRUrl(prUrl) {
             return [owner: owner, repo: repo]
         } else {
             echo "   ⚠️ Could not parse PR URL: ${prUrl}"
+            echo "   🔍 URL pattern expected: https://github.com/owner/repo/pull/XX"
             return null
         }
     } catch (Exception e) {
         echo "   ❌ Error parsing PR URL: ${e.getMessage()}"
+        return null
+    }
+}
+
+def extractRepoInfoFromGitRemote() {
+    try {
+        // Get git remote URL
+        def remoteUrl = sh(
+            script: 'git config --get remote.origin.url || echo ""',
+            returnStdout: true
+        ).trim()
+        
+        if (!remoteUrl || remoteUrl == '') {
+            echo "   ⚠️ Could not get git remote URL"
+            return null
+        }
+        
+        echo "   🔍 Git remote URL: ${remoteUrl}"
+        
+        // Parse git remote URL
+        // Format: https://github.com/owner/repo.git
+        // or: git@github.com:owner/repo.git
+        def urlPattern = ~/(?:https?:\/\/github\.com\/|git@github\.com:)([^\/]+)\/([^\/]+)(?:\.git)?/
+        def matcher = remoteUrl =~ urlPattern
+        
+        if (matcher) {
+            def owner = matcher[0][1]
+            def repo = matcher[0][2].replaceAll(/\.git$/, '')
+            echo "   📍 Parsed from git remote: owner=${owner}, repo=${repo}"
+            return [owner: owner, repo: repo]
+        } else {
+            echo "   ⚠️ Could not parse git remote URL: ${remoteUrl}"
+            return null
+        }
+    } catch (Exception e) {
+        echo "   ❌ Error parsing git remote URL: ${e.getMessage()}"
         return null
     }
 }
