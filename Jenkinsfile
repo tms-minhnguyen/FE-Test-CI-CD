@@ -330,9 +330,9 @@ def convertJsonToJUnitXml(jsonFilePath, outputXmlPath) {
         
         if (!suites || suites.isEmpty()) {
             echo "   ⚠️ No suites found in JSON data"
-            return
-        }
-        
+        return
+    }
+    
         // Build JUnit XML
         def xmlBuilder = new StringBuilder()
         xmlBuilder.append('<?xml version="1.0" encoding="UTF-8"?>\n')
@@ -344,8 +344,30 @@ def convertJsonToJUnitXml(jsonFilePath, outputXmlPath) {
         def testSuites = []
         
         suites.each { suite ->
+            // Handle nested suites structure
+            def specsToProcess = []
             if (suite.specs) {
-                suite.specs.each { spec ->
+                if (suite.specs instanceof List) {
+                    specsToProcess = suite.specs
+                } else {
+                    specsToProcess = [suite.specs]
+                }
+            } else if (suite.suites) {
+                // Try nested suites
+                def nestedSuites = suite.suites instanceof List ? suite.suites : [suite.suites]
+                nestedSuites.each { nestedSuite ->
+                    if (nestedSuite.specs) {
+                        if (nestedSuite.specs instanceof List) {
+                            specsToProcess.addAll(nestedSuite.specs)
+                        } else {
+                            specsToProcess.add(nestedSuite.specs)
+                        }
+                    }
+                }
+            }
+            
+            if (specsToProcess && !specsToProcess.isEmpty()) {
+                specsToProcess.each { spec ->
                     def suiteName = spec.title ?: spec.file ?: 'Unknown Suite'
                     def suiteTests = 0
                     def suiteFailures = 0
@@ -353,8 +375,17 @@ def convertJsonToJUnitXml(jsonFilePath, outputXmlPath) {
                     def suiteTime = 0
                     def testCases = []
                     
+                    def testsToProcess = []
                     if (spec.tests) {
-                        spec.tests.each { test ->
+                        if (spec.tests instanceof List) {
+                            testsToProcess = spec.tests
+                        } else {
+                            testsToProcess = [spec.tests]
+                        }
+                    }
+                    
+                    if (testsToProcess && !testsToProcess.isEmpty()) {
+                        testsToProcess.each { test ->
                             suiteTests++
                             totalTests++
                             
@@ -369,8 +400,23 @@ def convertJsonToJUnitXml(jsonFilePath, outputXmlPath) {
                             suiteTime += duration
                             totalTime += duration
                             
-                            // Get full test name (description) - this is what we want!
-                            def testName = test.title ?: 'Unknown test'
+                            // Get full test name (description) - try multiple sources
+                            def testName = test.title
+                            if (!testName && test.titlePath) {
+                                // titlePath is array, get last element
+                                if (test.titlePath instanceof List && !test.titlePath.isEmpty()) {
+                                    testName = test.titlePath[test.titlePath.size() - 1]
+                                } else if (test.titlePath instanceof String) {
+                                    // Parse titlePath string like " > frontend-chromium > ... > Test Name"
+                                    def parts = test.titlePath.split(' > ')
+                                    if (parts.length > 0) {
+                                        testName = parts[parts.length - 1].trim()
+                                    }
+                                }
+                            }
+                            if (!testName) {
+                                testName = 'Unknown test'
+                            }
                             
                             // Build testcase XML
                             def testCaseXml = new StringBuilder()
