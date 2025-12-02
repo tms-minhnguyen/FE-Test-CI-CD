@@ -123,8 +123,20 @@ pipeline {
                             env.AUTOMATION_TEST_JOB_BUILD_NUMBER = "${testJob.number}"
                             env.AUTOMATION_TEST_JOB_NAME = "${testJob.fullProjectName}"
                             
-                            if (testResult == 'FAILURE') {
-                                echo "⚠️ Automation tests failed, but continuing to fetch and publish results..."
+                            if (testResult == 'FAILURE' || testResult == 'UNSTABLE') {
+                                echo "❌ Automation tests failed or unstable!"
+                                echo "   Test Result: ${testResult}"
+                                echo "   Test Job URL: ${testUrl}"
+                                echo "   Continuing to fetch and publish results before failing build..."
+                                
+                                // Store failure status for later stages
+                                env.AUTOMATION_TEST_FAILED = 'true'
+                            } else if (testResult == 'SUCCESS') {
+                                echo "✅ Automation tests passed!"
+                                env.AUTOMATION_TEST_FAILED = 'false'
+                            } else {
+                                echo "⚠️ Automation test result is unknown: ${testResult}"
+                                env.AUTOMATION_TEST_FAILED = 'false'
                             }
                             
                         } catch (Exception e) {
@@ -222,12 +234,20 @@ pipeline {
                         def hasFailures = false
                         def testSummary = "No test results found"
                         
+                        // Check if automation test job failed (from previous stage)
+                        if (env.AUTOMATION_TEST_FAILED == 'true') {
+                            hasFailures = true
+                            testSummary = "Automation test job failed"
+                        }
+                        
                         if (fileExists('test-results/junit.xml')) {
                             echo "✅ Found JUnit XML file, publishing to GitHub Checks..."
                             
                             // Parse JUnit XML to get test results
                             def testResults = parseJUnitXml('test-results/junit.xml')
-                            hasFailures = testResults.failures > 0
+                            if (testResults.failures > 0) {
+                                hasFailures = true
+                            }
                             testSummary = "Total: ${testResults.total}, Passed: ${testResults.passed}, Failed: ${testResults.failures}"
                             
                             // Use Warnings Plugin to parse JUnit XML and publish to GitHub Checks
@@ -253,14 +273,24 @@ pipeline {
                             echo "✅ Test results published to GitHub Checks"
                         } else {
                             echo "⚠️ JUnit XML file not found at test-results/junit.xml"
-                            echo "   Skipping GitHub Checks publication"
-                            echo "   Make sure Automation job generates JUnit XML file"
+                            if (env.AUTOMATION_TEST_FAILED == 'true') {
+                                echo "   Automation test job failed and no results file found"
+                                testSummary = "Automation test job failed - no test results available"
+                            } else {
+                                echo "   Skipping GitHub Checks publication"
+                                echo "   Make sure Automation job generates JUnit XML file"
+                            }
                         }
                         
                         // Update GitHub Check Run with final status
                         def conclusion = hasFailures ? 'failure' : 'success'
                         def statusText = hasFailures ? 'Some tests failed' : 'All checks passed'
                         updateGitHubCheckRun(conclusion, statusText, testSummary)
+                        
+                        // Store test failure status
+                        if (hasFailures) {
+                            env.AUTOMATION_TEST_FAILED = 'true'
+                        }
                         
                     } catch (Exception e) {
                         echo "❌ Error publishing test results to GitHub Checks: ${e.getMessage()}"
@@ -269,6 +299,39 @@ pipeline {
                         
                         // Update check run with error status
                         updateGitHubCheckRun('failure', 'Error publishing test results', e.getMessage())
+                    }
+                }
+            }
+        }
+
+        stage('Validate Automation Test Results') {
+            when {
+                expression { 
+                    return env.CHANGE_ID != null && env.AUTOMATION_TEST_JOB_BUILD_NUMBER != null
+                }
+            }
+            steps {
+                script {
+                    echo "🔍 Validating automation test results..."
+                    
+                    def testFailed = env.AUTOMATION_TEST_FAILED == 'true'
+                    
+                    if (testFailed) {
+                        def testJobName = env.AUTOMATION_TEST_JOB_NAME ?: env.AUTOMATION_TEST_JOB
+                        def testBuildNumber = env.AUTOMATION_TEST_JOB_BUILD_NUMBER
+                        def testUrl = "${env.JENKINS_URL}job/${testJobName}/${testBuildNumber}/"
+                        
+                        echo "❌ Automation tests failed!"
+                        echo "   Test Job: ${testJobName} #${testBuildNumber}"
+                        echo "   Test Job URL: ${testUrl}"
+                        echo "   Build will be marked as FAILURE"
+                        
+                        // Fail the build
+                        currentBuild.result = 'FAILURE'
+                        error("❌ Automation tests failed. Please check the test results and fix the issues before merging.")
+                    } else {
+                        echo "✅ Automation tests passed successfully!"
+                        echo "   Build can continue"
                     }
                 }
             }
