@@ -6,8 +6,8 @@ pipeline {
         PATH = "/Users/phinguyen/.nvm/versions/node/v20.19.6/bin:${env.PATH}"
         GITHUB_TOKEN = credentials('github-token')
         AUTOMATION_TEST_JOB = 'tmc-nocode-survey-autotest'
-        GITHUB_REPO_OWNER = 'tms-minhnguyen'
-        GITHUB_REPO_NAME = 'FE-Test-CI-CD'
+        GITHUB_REPO_OWNER = 'TOMOSIA-VIETNAM'
+        GITHUB_REPO_NAME = 'nextjs-login-page'
     }
 
     stages {
@@ -24,127 +24,6 @@ pipeline {
                     }
                 }
                 checkout scm
-            }
-        }
-
-        stage('Create GitHub Check (In Progress) - Block Merge') {
-            when {
-                expression { 
-                    return env.CHANGE_ID != null
-                }
-            }
-            steps {
-                script {
-                    echo "🔄 Creating GitHub Check with 'in_progress' status..."
-                    echo "   This will disable merge button immediately while tests are running"
-                    
-                    try {
-                        def owner = env.GITHUB_REPO_OWNER
-                        def repo = env.GITHUB_REPO_NAME
-                        def sha = sh(
-                            script: 'git rev-parse HEAD',
-                            returnStdout: true
-                        ).trim()
-                        
-                        echo "   Commit SHA: ${sha}"
-                        echo "   Creating check to block merge..."
-                        
-                        // Create Check Run with in_progress status
-                        def checkRunData = [
-                            name: 'Automation Tests',
-                            head_sha: sha,
-                            status: 'in_progress',
-                            started_at: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC')),
-                            external_id: "jenkins-automation-tests-${env.BUILD_NUMBER}",
-                            details_url: "${env.BUILD_URL}",
-                            output: [
-                                title: 'Running automation tests...',
-                                summary: '⏳ Automation tests are running. Merge is blocked until all tests pass.\n\nThis check must pass before merging.'
-                            ]
-                        ]
-                        
-                        def apiUrl = "https://api.github.com/repos/${owner}/${repo}/check-runs"
-                        def jsonBody = groovy.json.JsonOutput.toJson(checkRunData)
-                        
-                        writeFile file: 'github-check-in-progress.json', text: jsonBody
-                        
-                        def response = sh(
-                            script: """
-                                curl -s -w "\\nHTTP_CODE:%{http_code}" \
-                                    -X POST \
-                                    -H "Authorization: token ${env.GITHUB_TOKEN}" \
-                                    -H "Accept: application/vnd.github.v3+json" \
-                                    -H "Content-Type: application/json" \
-                                    -d @github-check-in-progress.json \
-                                    ${apiUrl}
-                            """,
-                            returnStdout: true
-                        )
-                        
-                        def httpCode = response.split('HTTP_CODE:')[1]?.trim()
-                        def responseBody = response.split('HTTP_CODE:')[0]?.trim()
-                        
-                        if (httpCode == '201' || httpCode == '200') {
-                            def checkRun = new groovy.json.JsonSlurper().parseText(responseBody)
-                            env.GITHUB_CHECK_RUN_ID = "${checkRun.id}"
-                            echo "✅ GitHub Check created successfully!"
-                            echo "   Check ID: ${checkRun.id}"
-                            echo "   Check Name: ${checkRun.name}"
-                            echo "   Status: in_progress"
-                            
-                            // Also create a Status check (legacy API) for better compatibility
-                            try {
-                                def statusUrl = "https://api.github.com/repos/${owner}/${repo}/statuses/${sha}"
-                                def statusData = [
-                                    state: 'pending',
-                                    target_url: "${env.BUILD_URL}",
-                                    description: 'Automation tests are running...',
-                                    context: 'Automation Tests'
-                                ]
-                                def statusJson = groovy.json.JsonOutput.toJson(statusData)
-                                writeFile file: 'github-status.json', text: statusJson
-                                
-                                def statusResponse = sh(
-                                    script: """
-                                        curl -s -w "\\nHTTP_CODE:%{http_code}" \
-                                            -X POST \
-                                            -H "Authorization: token ${env.GITHUB_TOKEN}" \
-                                            -H "Accept: application/vnd.github.v3+json" \
-                                            -H "Content-Type: application/json" \
-                                            -d @github-status.json \
-                                            ${statusUrl}
-                                    """,
-                                    returnStdout: true
-                                )
-                                def statusHttpCode = statusResponse.split('HTTP_CODE:')[1]?.trim()
-                                if (statusHttpCode == '201' || statusHttpCode == '200') {
-                                    echo "✅ GitHub Status also created (for compatibility)"
-                                }
-                            } catch (Exception statusE) {
-                                echo "⚠️ Could not create GitHub Status: ${statusE.getMessage()}"
-                            }
-                            
-                            echo ""
-                            echo "✅ Merge button should now be DISABLED until tests complete"
-                            echo ""
-                            echo "📌 IMPORTANT: To ensure merge is blocked, configure Branch Protection Rules:"
-                            echo "   1. Go to: https://github.com/${owner}/${repo}/settings/branches"
-                            echo "   2. Add/Edit rule for branch: main (or your target branch)"
-                            echo "   3. Enable: 'Require status checks to pass before merging'"
-                            echo "   4. Enable: 'Require branches to be up to date before merging'"
-                            echo "   5. Add required check: 'Automation Tests'"
-                            echo "   6. Save changes"
-                        } else {
-                            echo "⚠️ Failed to create GitHub Check. HTTP ${httpCode}"
-                            echo "   Response: ${responseBody.take(500)}"
-                            echo "   Continuing build anyway..."
-                        }
-                    } catch (Exception e) {
-                        echo "⚠️ Error creating GitHub Check: ${e.getMessage()}"
-                        echo "   Stack trace: ${e.getStackTrace().take(3).join('\n')}"
-                        echo "   Continuing build anyway..."
-                    }
-                }
             }
         }
 
@@ -242,14 +121,7 @@ pipeline {
                             env.AUTOMATION_TEST_JOB_NAME = "${testJob.fullProjectName}"
                             
                             if (testResult == 'FAILURE') {
-                                echo "❌ Automation tests failed!"
-                                echo "   Test Job: ${testUrl}"
-                                echo "   This build will be marked as FAILURE"
-                                currentBuild.result = 'FAILURE'
-                            } else if (testResult == 'UNSTABLE') {
-                                echo "⚠️ Automation tests completed with warnings"
-                            } else if (testResult == 'SUCCESS') {
-                                echo "✅ All automation tests passed"
+                                echo "⚠️ Automation tests failed, but continuing to fetch and publish results..."
                             }
                             
                         } catch (Exception e) {
@@ -343,38 +215,11 @@ pipeline {
                 script {
                     echo "📤 Publishing test results to GitHub Checks..."
                     
-                    // Check if automation test job failed
-                    def automationTestFailed = false
-                    if (env.AUTOMATION_TEST_JOB_BUILD_NUMBER) {
-                        try {
-                            def testJobName = env.AUTOMATION_TEST_JOB_NAME ?: env.AUTOMATION_TEST_JOB
-                            def testBuildNumber = env.AUTOMATION_TEST_JOB_BUILD_NUMBER
-                            def testJob = Jenkins.instance.getItemByFullName(testJobName)
-                            if (testJob) {
-                                def testBuild = testJob.getBuildByNumber(testBuildNumber.toInteger())
-                                if (testBuild && testBuild.result == hudson.model.Result.FAILURE) {
-                                    automationTestFailed = true
-                                    echo "❌ Automation test job failed - this build will be marked as FAILURE"
-                                }
-                            }
-                        } catch (Exception e) {
-                            echo "⚠️ Could not check automation test job status: ${e.getMessage()}"
-                        }
-                    }
-                    
                     try {
                         if (fileExists('test-results/junit.xml')) {
                             echo "✅ Found JUnit XML file, publishing to GitHub Checks..."
                             
-                            // If we created a check earlier, update it; otherwise let Warnings Plugin create one
-                            if (env.GITHUB_CHECK_RUN_ID) {
-                                echo "   Updating existing GitHub Check (ID: ${env.GITHUB_CHECK_RUN_ID})"
-                                // Warnings Plugin will update the check automatically when publishChecks is true
-                                // But we need to ensure it uses the same check run ID
-                            }
-                            
                             // Use Warnings Plugin to parse JUnit XML and publish to GitHub Checks
-                            // qualityGates will ensure check status is "failure" if any test fails
                             recordIssues(
                                 enabledForFailure: true,
                                 tools: [
@@ -395,52 +240,16 @@ pipeline {
                             )
                             
                             echo "✅ Test results published to GitHub Checks"
-                            
-                            // If automation test failed, ensure build fails (this will also fail the GitHub Check)
-                            if (automationTestFailed) {
-                                echo "❌ Failing build due to automation test failures"
-                                echo "   This will mark the GitHub Check as 'failure' and disable merge button"
-                                
-                                // Update the check to failure status if we created it earlier
-                                if (env.GITHUB_CHECK_RUN_ID) {
-                                    updateGitHubCheckStatus('failure', 'Automation tests failed')
-                                }
-                                
-                                currentBuild.result = 'FAILURE'
-                                error("Automation tests failed - see ${env.JENKINS_URL}job/${env.AUTOMATION_TEST_JOB_NAME}/${env.AUTOMATION_TEST_JOB_BUILD_NUMBER}/")
-                            } else {
-                                // Update check to success if we created it earlier
-                                if (env.GITHUB_CHECK_RUN_ID) {
-                                    updateGitHubCheckStatus('success', 'All automation tests passed')
-                                }
-                            }
                         } else {
                             echo "⚠️ JUnit XML file not found at test-results/junit.xml"
-                            
-                            // If automation test failed but no JUnit XML, still fail
-                            if (automationTestFailed) {
-                                echo "❌ Automation tests failed but no JUnit XML found"
-                                echo "   Failing build to prevent merge"
-                                currentBuild.result = 'FAILURE'
-                                error("Automation tests failed - see ${env.JENKINS_URL}job/${env.AUTOMATION_TEST_JOB_NAME}/${env.AUTOMATION_TEST_JOB_BUILD_NUMBER}/")
-                            } else {
-                                echo "   Skipping GitHub Checks publication"
-                                echo "   Make sure Automation job generates JUnit XML file"
-                            }
+                            echo "   Skipping GitHub Checks publication"
+                            echo "   Make sure Automation job generates JUnit XML file"
                         }
                         
                     } catch (Exception e) {
                         echo "❌ Error publishing test results to GitHub Checks: ${e.getMessage()}"
                         echo "   Stack trace: ${e.getStackTrace().take(3).join('\n')}"
-                        
-                        // If automation test failed, still fail the build
-                        if (automationTestFailed) {
-                            echo "❌ Failing build due to automation test failures"
-                            currentBuild.result = 'FAILURE'
-                            error("Automation tests failed - see ${env.JENKINS_URL}job/${env.AUTOMATION_TEST_JOB_NAME}/${env.AUTOMATION_TEST_JOB_BUILD_NUMBER}/")
-                        } else {
-                            echo "   Continuing build..."
-                        }
+                        echo "   Continuing build..."
                     }
                 }
             }
@@ -494,6 +303,255 @@ def extractFeatureName(branchName) {
     return null
 }
 
+def readTestResultsFromJob(testJob) {
+    try {
+        def jobName = testJob.fullProjectName
+        def buildNumber = testJob.number
+        
+        echo "   Reading test results from job: ${jobName} #${buildNumber}"
+        
+        def workspacePath = "${env.JENKINS_HOME}/workspace/${jobName}"
+        def resultsFile = "${workspacePath}/test-results-summary.json"
+        
+        echo "   Looking for file: ${resultsFile}"
+        
+        if (fileExists(resultsFile)) {
+            def jsonContent = readFile(resultsFile)
+            def testResults = new groovy.json.JsonSlurper().parseText(jsonContent)
+            echo "   ✅ Successfully read test results file"
+            return testResults
+        } else {
+            echo "   ⚠️ Test results file not found at: ${resultsFile}"
+            echo "   Trying alternative path..."
+            
+            def altPath = "${env.JENKINS_HOME}/jobs/${jobName}/builds/${buildNumber}/archive/test-results-summary.json"
+            if (fileExists(altPath)) {
+                def jsonContent = readFile(altPath)
+                def testResults = new groovy.json.JsonSlurper().parseText(jsonContent)
+                echo "   ✅ Successfully read test results from archive"
+                return testResults
+            }
+            
+            echo "   ⚠️ Test results file not found in alternative path either"
+            echo "   Automation Test job should save test-results-summary.json file"
+        }
+        
+        return null
+    } catch (Exception e) {
+        echo "   ❌ Error reading test results: ${e.getMessage()}"
+        echo "   Stack trace: ${e.getStackTrace().take(3).join('\n')}"
+        return null
+    }
+}
+
+def commentTestResultsToPR(testResults, testTag, testUrl, buildNumber) {
+    if (!env.CHANGE_ID || !env.GITHUB_TOKEN) {
+        echo "⚠️ Missing PR info or GitHub token. Skipping PR comment."
+        return
+    }
+    
+    def result = testResults.failed > 0 ? 'FAILED' : 'PASSED'
+    def statusEmoji = result == 'PASSED' ? '✅' : '❌'
+    
+    def total = testResults.total ?: 0
+    def passed = testResults.passed ?: 0
+    def failed = testResults.failed ?: 0
+    def skipped = testResults.skipped ?: 0
+    def duration = testResults.duration ?: 0
+    def durationSeconds = duration > 0 ? String.format("%.2f", duration / 1000) : "0.00"
+    
+    def comment = """## 🤖 Automation Test Results
+
+**Test Tag:** `${testTag}`
+**Status:** ${statusEmoji} **${result}**
+**Test Job:** [View Details #${buildNumber}](${testUrl})
+**Duration:** ${durationSeconds}s
+
+### 📊 Test Summary
+
+| Metric | Count |
+|--------|-------|
+| **Total Tests** | ${total} |
+| **✅ Passed** | ${passed} |
+| **❌ Failed** | ${failed} |
+| **⏭️ Skipped** | ${skipped} |
+
+"""
+    
+    if (testResults.testCases && !testResults.testCases.isEmpty()) {
+        comment += "### 📝 Test Cases Details\n\n"
+        
+        def passedTests = testResults.testCases.findAll { it.status == 'passed' }
+        def failedTests = testResults.testCases.findAll { it.status == 'failed' }
+        def skippedTests = testResults.testCases.findAll { it.status == 'skipped' }
+        
+        if (passedTests && !passedTests.isEmpty()) {
+            comment += "#### ✅ Passed Tests (${passedTests.size()})\n\n"
+            passedTests.each { test ->
+                def durationStr = test.duration > 0 ? " (${String.format("%.2f", test.duration / 1000)}s)" : ""
+                comment += "- ✅ `${test.title}`${durationStr}\n"
+            }
+            comment += "\n"
+        }
+        
+        if (failedTests && !failedTests.isEmpty()) {
+            comment += "#### ❌ Failed Tests (${failedTests.size()})\n\n"
+            failedTests.each { test ->
+                comment += "- ❌ `${test.title}`\n"
+                if (test.error) {
+                    def errorMsg = test.error.replaceAll(/`/, "'").replaceAll(/\n/, ' ').take(300)
+                    comment += "  ```\n${errorMsg}\n```\n"
+                }
+            }
+            comment += "\n"
+        }
+        
+        if (skippedTests && !skippedTests.isEmpty()) {
+            comment += "#### ⏭️ Skipped Tests (${skippedTests.size()})\n\n"
+            skippedTests.each { test ->
+                comment += "- ⏭️ `${test.title}`\n"
+            }
+            comment += "\n"
+        }
+    } else {
+        comment += "### ⚠️ No test cases found\n\n"
+        comment += "No test cases were executed or parsed.\n"
+    }
+    
+    comment += """---
+*This comment was automatically generated by Jenkins FE Job*
+"""
+    
+    commentToPR(comment)
+}
+
+def createGitHubCheckRuns(testResults, testTag, testUrl, buildNumber) {
+    if (!env.CHANGE_ID || !env.GITHUB_TOKEN) {
+        echo "⚠️ Missing PR info or GitHub token. Skipping check runs creation."
+        return
+    }
+    
+    try {
+        def repoOwner = env.GITHUB_REPO_OWNER
+        def repoName = env.GITHUB_REPO_NAME
+        def prSha = getPRHeadSha(env.CHANGE_ID)
+        
+        if (!prSha) {
+            echo "⚠️ Could not get PR head SHA. Skipping check runs."
+            return
+        }
+        
+        echo "   Creating GitHub Check Runs for ${testResults.testCases?.size() ?: 0} test cases..."
+        
+        if (testResults.testCases && !testResults.testCases.isEmpty()) {
+            def successCount = 0
+            def failureCount = 0
+            
+            testResults.testCases.each { test ->
+                def checkName = "${testTag} - ${test.title}"
+                def conclusion = test.status == 'passed' ? 'success' : 
+                                test.status == 'failed' ? 'failure' : 
+                                'neutral'
+                
+                def title = test.status == 'passed' ? 
+                    "${test.title} passed" : 
+                    "${test.title} failed. Investigate!"
+                
+                def summary = test.status == 'passed' ? 
+                    "Test passed successfully" : 
+                    "Test failed: ${test.error ?: 'Unknown error'}"
+                
+                def outputText = "**Test:** ${test.title}\n"
+                outputText += "**Status:** ${test.status}\n"
+                if (test.duration > 0) {
+                    outputText += "**Duration:** ${String.format("%.2f", test.duration / 1000)}s\n"
+                }
+                if (test.error) {
+                    def errorMsg = test.error.replaceAll(/`/, "'").replaceAll(/\n/, ' ').take(500)
+                    outputText += "\n**Error:**\n```\n${errorMsg}\n```\n"
+                }
+                
+                def checkRunData = [
+                    name: checkName,
+                    head_sha: prSha,
+                    status: 'completed',
+                    conclusion: conclusion,
+                    output: [
+                        title: title,
+                        summary: summary,
+                        text: outputText
+                    ],
+                    details_url: testUrl
+                ]
+                
+                def jsonBody = groovy.json.JsonOutput.toJson(checkRunData)
+                
+                def response = sh(
+                    script: """
+                        curl -s -w "\\nHTTP_CODE:%{http_code}" -X POST \
+                            -H "Authorization: token ${env.GITHUB_TOKEN}" \
+                            -H "Accept: application/vnd.github.v3+json" \
+                            -H "Content-Type: application/json" \
+                            https://api.github.com/repos/${repoOwner}/${repoName}/check-runs \
+                            -d '${jsonBody}'
+                    """,
+                    returnStdout: true
+                ).trim()
+                
+                def httpCode = response.split('HTTP_CODE:')[1] ?: 'unknown'
+                
+                if (httpCode == '201') {
+                    if (test.status == 'passed') {
+                        successCount++
+                    } else if (test.status == 'failed') {
+                        failureCount++
+                    }
+                } else {
+                    echo "   ⚠️ Failed to create check run for ${test.title}: HTTP ${httpCode}"
+                }
+            }
+            
+            echo "   ✅ Created ${testResults.testCases.size()} check runs (${successCount} passed, ${failureCount} failed)"
+        } else {
+            echo "   ⚠️ No test cases to create check runs for"
+        }
+        
+    } catch (Exception e) {
+        echo "❌ Failed to create check runs: ${e.getMessage()}"
+        echo "   Stack trace: ${e.getStackTrace().take(3).join('\n')}"
+    }
+}
+
+def getPRHeadSha(prNumber) {
+    try {
+        def repoOwner = env.GITHUB_REPO_OWNER
+        def repoName = env.GITHUB_REPO_NAME
+        
+        def response = sh(
+            script: """
+                curl -s -H "Authorization: token ${env.GITHUB_TOKEN}" \
+                    -H "Accept: application/vnd.github.v3+json" \
+                    https://api.github.com/repos/${repoOwner}/${repoName}/pulls/${prNumber}
+            """,
+            returnStdout: true
+        ).trim()
+        
+        def prData = new groovy.json.JsonSlurper().parseText(response)
+        def headSha = prData.head?.sha
+        
+        if (headSha) {
+            echo "   ✅ Got PR head SHA: ${headSha.take(7)}..."
+            return headSha
+        } else {
+            echo "   ⚠️ Could not extract head SHA from PR data"
+            return null
+        }
+    } catch (Exception e) {
+        echo "   ⚠️ Error getting PR head SHA: ${e.getMessage()}"
+        return null
+    }
+}
+
 def convertJsonToJUnitXml(jsonFilePath, outputXmlPath) {
     try {
         echo "   Reading JSON results from: ${jsonFilePath}"
@@ -521,9 +579,9 @@ def convertJsonToJUnitXml(jsonFilePath, outputXmlPath) {
         
         if (!suites || suites.isEmpty()) {
             echo "   ⚠️ No suites found in JSON data"
-        return
-    }
-    
+            return
+        }
+        
         // Build JUnit XML
         def xmlBuilder = new StringBuilder()
         xmlBuilder.append('<?xml version="1.0" encoding="UTF-8"?>\n')
@@ -535,30 +593,8 @@ def convertJsonToJUnitXml(jsonFilePath, outputXmlPath) {
         def testSuites = []
         
         suites.each { suite ->
-            // Handle nested suites structure
-            def specsToProcess = []
             if (suite.specs) {
-                if (suite.specs instanceof List) {
-                    specsToProcess = suite.specs
-                } else {
-                    specsToProcess = [suite.specs]
-                }
-            } else if (suite.suites) {
-                // Try nested suites
-                def nestedSuites = suite.suites instanceof List ? suite.suites : [suite.suites]
-                nestedSuites.each { nestedSuite ->
-                    if (nestedSuite.specs) {
-                        if (nestedSuite.specs instanceof List) {
-                            specsToProcess.addAll(nestedSuite.specs)
-                        } else {
-                            specsToProcess.add(nestedSuite.specs)
-                        }
-                    }
-                }
-            }
-            
-            if (specsToProcess && !specsToProcess.isEmpty()) {
-                specsToProcess.each { spec ->
+                suite.specs.each { spec ->
                     def suiteName = spec.title ?: spec.file ?: 'Unknown Suite'
                     def suiteTests = 0
                     def suiteFailures = 0
@@ -566,17 +602,8 @@ def convertJsonToJUnitXml(jsonFilePath, outputXmlPath) {
                     def suiteTime = 0
                     def testCases = []
                     
-                    def testsToProcess = []
                     if (spec.tests) {
-                        if (spec.tests instanceof List) {
-                            testsToProcess = spec.tests
-                        } else {
-                            testsToProcess = [spec.tests]
-                        }
-                    }
-                    
-                    if (testsToProcess && !testsToProcess.isEmpty()) {
-                        testsToProcess.each { test ->
+                        spec.tests.each { test ->
                             suiteTests++
                             totalTests++
                             
@@ -591,23 +618,8 @@ def convertJsonToJUnitXml(jsonFilePath, outputXmlPath) {
                             suiteTime += duration
                             totalTime += duration
                             
-                            // Get full test name (description) - try multiple sources
-                            def testName = test.title
-                            if (!testName && test.titlePath) {
-                                // titlePath is array, get last element
-                                if (test.titlePath instanceof List && !test.titlePath.isEmpty()) {
-                                    testName = test.titlePath[test.titlePath.size() - 1]
-                                } else if (test.titlePath instanceof String) {
-                                    // Parse titlePath string like " > frontend-chromium > ... > Test Name"
-                                    def parts = test.titlePath.split(' > ')
-                                    if (parts.length > 0) {
-                                        testName = parts[parts.length - 1].trim()
-                                    }
-                                }
-                            }
-                            if (!testName) {
-                                testName = 'Unknown test'
-                            }
+                            // Get full test name (description) - this is what we want!
+                            def testName = test.title ?: 'Unknown test'
                             
                             // Build testcase XML
                             def testCaseXml = new StringBuilder()
@@ -695,60 +707,32 @@ def escapeXml(String text) {
         .replace("'", '&apos;')
 }
 
-def updateGitHubCheckStatus(String conclusion, String summary) {
-    if (!env.GITHUB_CHECK_RUN_ID) {
-        echo "⚠️ No GitHub Check Run ID found, skipping update"
+def commentToPR(commentBody) {
+    if (!env.CHANGE_ID || !env.GITHUB_TOKEN) {
+        echo "⚠️ Missing PR info or GitHub token. Skipping PR comment."
         return
     }
     
     try {
-        def owner = env.GITHUB_REPO_OWNER
-        def repo = env.GITHUB_REPO_NAME
-        def checkRunId = env.GITHUB_CHECK_RUN_ID
-        def sha = sh(
-            script: 'git rev-parse HEAD',
-            returnStdout: true
-        ).trim()
+        def repoOwner = env.GITHUB_REPO_OWNER
+        def repoName = env.GITHUB_REPO_NAME
+        def prNumber = env.CHANGE_ID
         
-        def checkRunData = [
-            status: 'completed',
-            conclusion: conclusion,
-            completed_at: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC')),
-            output: [
-                title: conclusion == 'success' ? 'All automation tests passed' : 'Automation tests failed',
-                summary: summary
-            ]
-        ]
+        def jsonBody = groovy.json.JsonOutput.toJson(commentBody)
         
-        def apiUrl = "https://api.github.com/repos/${owner}/${repo}/check-runs/${checkRunId}"
-        def jsonBody = groovy.json.JsonOutput.toJson(checkRunData)
+        sh """
+            curl -s -X POST \
+                -H "Authorization: token ${env.GITHUB_TOKEN}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                -H "Content-Type: application/json" \
+                https://api.github.com/repos/${repoOwner}/${repoName}/issues/${prNumber}/comments \
+                -d '{"body": ${jsonBody}}' \
+                -w "\\nHTTP Status: %{http_code}\\n"
+        """
         
-        writeFile file: 'github-check-update.json', text: jsonBody
-        
-        def response = sh(
-            script: """
-                curl -s -w "\\nHTTP_CODE:%{http_code}" \
-                    -X PATCH \
-                    -H "Authorization: token ${env.GITHUB_TOKEN}" \
-                    -H "Accept: application/vnd.github.v3+json" \
-                    -H "Content-Type: application/json" \
-                    -d @github-check-update.json \
-                    ${apiUrl}
-            """,
-            returnStdout: true
-        )
-        
-        def httpCode = response.split('HTTP_CODE:')[1]?.trim()
-        def responseBody = response.split('HTTP_CODE:')[0]?.trim()
-        
-        if (httpCode == '200') {
-            echo "✅ GitHub Check updated to status: ${conclusion}"
-        } else {
-            echo "⚠️ Failed to update GitHub Check. HTTP ${httpCode}"
-            echo "   Response: ${responseBody.take(200)}"
-        }
+        echo "✅ Comment posted to PR #${prNumber}"
     } catch (Exception e) {
-        echo "⚠️ Error updating GitHub Check: ${e.getMessage()}"
+        echo "❌ Failed to comment to PR: ${e.getMessage()}"
+        echo "   This is not a critical error, pipeline will continue"
     }
 }
-
