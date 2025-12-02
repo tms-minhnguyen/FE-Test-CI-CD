@@ -27,7 +27,7 @@ pipeline {
             }
         }
 
-        stage('Create GitHub Check (In Progress)') {
+        stage('Create GitHub Check (In Progress) - Block Merge') {
             when {
                 expression { 
                     return env.CHANGE_ID != null
@@ -36,7 +36,7 @@ pipeline {
             steps {
                 script {
                     echo "🔄 Creating GitHub Check with 'in_progress' status..."
-                    echo "   This will disable merge button while tests are running"
+                    echo "   This will disable merge button immediately while tests are running"
                     
                     try {
                         def owner = env.GITHUB_REPO_OWNER
@@ -46,14 +46,20 @@ pipeline {
                             returnStdout: true
                         ).trim()
                         
+                        echo "   Commit SHA: ${sha}"
+                        echo "   Creating check to block merge..."
+                        
+                        // Create Check Run with in_progress status
                         def checkRunData = [
                             name: 'Automation Tests',
                             head_sha: sha,
                             status: 'in_progress',
                             started_at: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC')),
+                            external_id: "jenkins-automation-tests-${env.BUILD_NUMBER}",
+                            details_url: "${env.BUILD_URL}",
                             output: [
                                 title: 'Running automation tests...',
-                                summary: 'Waiting for test results to complete.'
+                                summary: '⏳ Automation tests are running. Merge is blocked until all tests pass.\n\nThis check must pass before merging.'
                             ]
                         ]
                         
@@ -81,9 +87,53 @@ pipeline {
                         if (httpCode == '201' || httpCode == '200') {
                             def checkRun = new groovy.json.JsonSlurper().parseText(responseBody)
                             env.GITHUB_CHECK_RUN_ID = "${checkRun.id}"
-                            echo "✅ GitHub Check created with ID: ${checkRun.id}"
+                            echo "✅ GitHub Check created successfully!"
+                            echo "   Check ID: ${checkRun.id}"
+                            echo "   Check Name: ${checkRun.name}"
                             echo "   Status: in_progress"
-                            echo "   Merge button is now disabled until tests complete"
+                            
+                            // Also create a Status check (legacy API) for better compatibility
+                            try {
+                                def statusUrl = "https://api.github.com/repos/${owner}/${repo}/statuses/${sha}"
+                                def statusData = [
+                                    state: 'pending',
+                                    target_url: "${env.BUILD_URL}",
+                                    description: 'Automation tests are running...',
+                                    context: 'Automation Tests'
+                                ]
+                                def statusJson = groovy.json.JsonOutput.toJson(statusData)
+                                writeFile file: 'github-status.json', text: statusJson
+                                
+                                def statusResponse = sh(
+                                    script: """
+                                        curl -s -w "\\nHTTP_CODE:%{http_code}" \
+                                            -X POST \
+                                            -H "Authorization: token ${env.GITHUB_TOKEN}" \
+                                            -H "Accept: application/vnd.github.v3+json" \
+                                            -H "Content-Type: application/json" \
+                                            -d @github-status.json \
+                                            ${statusUrl}
+                                    """,
+                                    returnStdout: true
+                                )
+                                def statusHttpCode = statusResponse.split('HTTP_CODE:')[1]?.trim()
+                                if (statusHttpCode == '201' || statusHttpCode == '200') {
+                                    echo "✅ GitHub Status also created (for compatibility)"
+                                }
+                            } catch (Exception statusE) {
+                                echo "⚠️ Could not create GitHub Status: ${statusE.getMessage()}"
+                            }
+                            
+                            echo ""
+                            echo "✅ Merge button should now be DISABLED until tests complete"
+                            echo ""
+                            echo "📌 IMPORTANT: To ensure merge is blocked, configure Branch Protection Rules:"
+                            echo "   1. Go to: https://github.com/${owner}/${repo}/settings/branches"
+                            echo "   2. Add/Edit rule for branch: main (or your target branch)"
+                            echo "   3. Enable: 'Require status checks to pass before merging'"
+                            echo "   4. Enable: 'Require branches to be up to date before merging'"
+                            echo "   5. Add required check: 'Automation Tests'"
+                            echo "   6. Save changes"
                         } else {
                             echo "⚠️ Failed to create GitHub Check. HTTP ${httpCode}"
                             echo "   Response: ${responseBody.take(500)}"
@@ -91,6 +141,7 @@ pipeline {
                         }
                     } catch (Exception e) {
                         echo "⚠️ Error creating GitHub Check: ${e.getMessage()}"
+                        echo "   Stack trace: ${e.getStackTrace().take(3).join('\n')}"
                         echo "   Continuing build anyway..."
                     }
                 }
