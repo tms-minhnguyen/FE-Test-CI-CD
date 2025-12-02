@@ -27,6 +27,76 @@ pipeline {
             }
         }
 
+        stage('Create GitHub Check (In Progress)') {
+            when {
+                expression { 
+                    return env.CHANGE_ID != null
+                }
+            }
+            steps {
+                script {
+                    echo "🔄 Creating GitHub Check with 'in_progress' status..."
+                    echo "   This will disable merge button while tests are running"
+                    
+                    try {
+                        def owner = env.GITHUB_REPO_OWNER
+                        def repo = env.GITHUB_REPO_NAME
+                        def sha = sh(
+                            script: 'git rev-parse HEAD',
+                            returnStdout: true
+                        ).trim()
+                        
+                        def checkRunData = [
+                            name: 'Automation Tests',
+                            head_sha: sha,
+                            status: 'in_progress',
+                            started_at: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC')),
+                            output: [
+                                title: 'Running automation tests...',
+                                summary: 'Waiting for test results to complete.'
+                            ]
+                        ]
+                        
+                        def apiUrl = "https://api.github.com/repos/${owner}/${repo}/check-runs"
+                        def jsonBody = groovy.json.JsonOutput.toJson(checkRunData)
+                        
+                        writeFile file: 'github-check-in-progress.json', text: jsonBody
+                        
+                        def response = sh(
+                            script: """
+                                curl -s -w "\\nHTTP_CODE:%{http_code}" \
+                                    -X POST \
+                                    -H "Authorization: token ${env.GITHUB_TOKEN}" \
+                                    -H "Accept: application/vnd.github.v3+json" \
+                                    -H "Content-Type: application/json" \
+                                    -d @github-check-in-progress.json \
+                                    ${apiUrl}
+                            """,
+                            returnStdout: true
+                        )
+                        
+                        def httpCode = response.split('HTTP_CODE:')[1]?.trim()
+                        def responseBody = response.split('HTTP_CODE:')[0]?.trim()
+                        
+                        if (httpCode == '201' || httpCode == '200') {
+                            def checkRun = new groovy.json.JsonSlurper().parseText(responseBody)
+                            env.GITHUB_CHECK_RUN_ID = "${checkRun.id}"
+                            echo "✅ GitHub Check created with ID: ${checkRun.id}"
+                            echo "   Status: in_progress"
+                            echo "   Merge button is now disabled until tests complete"
+                        } else {
+                            echo "⚠️ Failed to create GitHub Check. HTTP ${httpCode}"
+                            echo "   Response: ${responseBody.take(500)}"
+                            echo "   Continuing build anyway..."
+                        }
+                    } catch (Exception e) {
+                        echo "⚠️ Error creating GitHub Check: ${e.getMessage()}"
+                        echo "   Continuing build anyway..."
+                    }
+                }
+            }
+        }
+
         stage('Verify Environment') {
             steps {
                 script {
@@ -245,7 +315,15 @@ pipeline {
                         if (fileExists('test-results/junit.xml')) {
                             echo "✅ Found JUnit XML file, publishing to GitHub Checks..."
                             
+                            // If we created a check earlier, update it; otherwise let Warnings Plugin create one
+                            if (env.GITHUB_CHECK_RUN_ID) {
+                                echo "   Updating existing GitHub Check (ID: ${env.GITHUB_CHECK_RUN_ID})"
+                                // Warnings Plugin will update the check automatically when publishChecks is true
+                                // But we need to ensure it uses the same check run ID
+                            }
+                            
                             // Use Warnings Plugin to parse JUnit XML and publish to GitHub Checks
+                            // qualityGates will ensure check status is "failure" if any test fails
                             recordIssues(
                                 enabledForFailure: true,
                                 tools: [
@@ -266,17 +344,38 @@ pipeline {
                             )
                             
                             echo "✅ Test results published to GitHub Checks"
+                            
+                            // If automation test failed, ensure build fails (this will also fail the GitHub Check)
+                            if (automationTestFailed) {
+                                echo "❌ Failing build due to automation test failures"
+                                echo "   This will mark the GitHub Check as 'failure' and disable merge button"
+                                
+                                // Update the check to failure status if we created it earlier
+                                if (env.GITHUB_CHECK_RUN_ID) {
+                                    updateGitHubCheckStatus('failure', 'Automation tests failed')
+                                }
+                                
+                                currentBuild.result = 'FAILURE'
+                                error("Automation tests failed - see ${env.JENKINS_URL}job/${env.AUTOMATION_TEST_JOB_NAME}/${env.AUTOMATION_TEST_JOB_BUILD_NUMBER}/")
+                            } else {
+                                // Update check to success if we created it earlier
+                                if (env.GITHUB_CHECK_RUN_ID) {
+                                    updateGitHubCheckStatus('success', 'All automation tests passed')
+                                }
+                            }
                         } else {
                             echo "⚠️ JUnit XML file not found at test-results/junit.xml"
-                            echo "   Skipping GitHub Checks publication"
-                            echo "   Make sure Automation job generates JUnit XML file"
-                        }
-                        
-                        // Fail build if automation tests failed
-                        if (automationTestFailed) {
-                            echo "❌ Failing build due to automation test failures"
-                            currentBuild.result = 'FAILURE'
-                            error("Automation tests failed - see ${env.JENKINS_URL}job/${env.AUTOMATION_TEST_JOB_NAME}/${env.AUTOMATION_TEST_JOB_BUILD_NUMBER}/")
+                            
+                            // If automation test failed but no JUnit XML, still fail
+                            if (automationTestFailed) {
+                                echo "❌ Automation tests failed but no JUnit XML found"
+                                echo "   Failing build to prevent merge"
+                                currentBuild.result = 'FAILURE'
+                                error("Automation tests failed - see ${env.JENKINS_URL}job/${env.AUTOMATION_TEST_JOB_NAME}/${env.AUTOMATION_TEST_JOB_BUILD_NUMBER}/")
+                            } else {
+                                echo "   Skipping GitHub Checks publication"
+                                echo "   Make sure Automation job generates JUnit XML file"
+                            }
                         }
                         
                     } catch (Exception e) {
@@ -543,5 +642,62 @@ def escapeXml(String text) {
         .replace('>', '&gt;')
         .replace('"', '&quot;')
         .replace("'", '&apos;')
+}
+
+def updateGitHubCheckStatus(String conclusion, String summary) {
+    if (!env.GITHUB_CHECK_RUN_ID) {
+        echo "⚠️ No GitHub Check Run ID found, skipping update"
+        return
+    }
+    
+    try {
+        def owner = env.GITHUB_REPO_OWNER
+        def repo = env.GITHUB_REPO_NAME
+        def checkRunId = env.GITHUB_CHECK_RUN_ID
+        def sha = sh(
+            script: 'git rev-parse HEAD',
+            returnStdout: true
+        ).trim()
+        
+        def checkRunData = [
+            status: 'completed',
+            conclusion: conclusion,
+            completed_at: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC')),
+            output: [
+                title: conclusion == 'success' ? 'All automation tests passed' : 'Automation tests failed',
+                summary: summary
+            ]
+        ]
+        
+        def apiUrl = "https://api.github.com/repos/${owner}/${repo}/check-runs/${checkRunId}"
+        def jsonBody = groovy.json.JsonOutput.toJson(checkRunData)
+        
+        writeFile file: 'github-check-update.json', text: jsonBody
+        
+        def response = sh(
+            script: """
+                curl -s -w "\\nHTTP_CODE:%{http_code}" \
+                    -X PATCH \
+                    -H "Authorization: token ${env.GITHUB_TOKEN}" \
+                    -H "Accept: application/vnd.github.v3+json" \
+                    -H "Content-Type: application/json" \
+                    -d @github-check-update.json \
+                    ${apiUrl}
+            """,
+            returnStdout: true
+        )
+        
+        def httpCode = response.split('HTTP_CODE:')[1]?.trim()
+        def responseBody = response.split('HTTP_CODE:')[0]?.trim()
+        
+        if (httpCode == '200') {
+            echo "✅ GitHub Check updated to status: ${conclusion}"
+        } else {
+            echo "⚠️ Failed to update GitHub Check. HTTP ${httpCode}"
+            echo "   Response: ${responseBody.take(200)}"
+        }
+    } catch (Exception e) {
+        echo "⚠️ Error updating GitHub Check: ${e.getMessage()}"
+    }
 }
 
