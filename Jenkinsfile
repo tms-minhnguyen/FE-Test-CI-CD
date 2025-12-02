@@ -6,6 +6,7 @@ pipeline {
         PATH = "/Users/phinguyen/.nvm/versions/node/v20.19.6/bin:${env.PATH}"
         GITHUB_TOKEN = credentials('github-token')
         AUTOMATION_TEST_JOB = 'tmc-nocode-survey-autotest'
+        // Default values, will be overridden from PR URL if available
         GITHUB_REPO_OWNER = 'TOMOSIA-VIETNAM'
         GITHUB_REPO_NAME = 'nextjs-login-page'
     }
@@ -19,6 +20,18 @@ pipeline {
                         echo "   PR Branch: ${env.CHANGE_BRANCH}"
                         echo "   Target Branch: ${env.CHANGE_TARGET}"
                         echo "   PR URL: ${env.CHANGE_URL}"
+                        
+                        // Extract repo owner and name from PR URL
+                        if (env.CHANGE_URL) {
+                            def repoInfo = extractRepoInfoFromPRUrl(env.CHANGE_URL)
+                            if (repoInfo) {
+                                env.GITHUB_REPO_OWNER = repoInfo.owner
+                                env.GITHUB_REPO_NAME = repoInfo.repo
+                                echo "   ✅ Extracted repo info from PR URL: ${repoInfo.owner}/${repoInfo.repo}"
+                            } else {
+                                echo "   ⚠️ Could not extract repo info from PR URL, using defaults"
+                            }
+                        }
                         
                         // Create GitHub Check Run with "in_progress" status
                         createGitHubCheckRun('in_progress', null, 'CI/CD pipeline started')
@@ -994,6 +1007,28 @@ def parseJUnitXml(String xmlPath) {
     }
     
     return results
+}
+
+def extractRepoInfoFromPRUrl(prUrl) {
+    try {
+        // PR URL format: https://github.com/owner/repo/pull/49
+        // or: https://github.com/owner/repo/pull/49/
+        def urlPattern = ~/https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/pull\/\d+/
+        def matcher = prUrl =~ urlPattern
+        
+        if (matcher) {
+            def owner = matcher[0][1]
+            def repo = matcher[0][2]
+            echo "   📍 Parsed from PR URL: owner=${owner}, repo=${repo}"
+            return [owner: owner, repo: repo]
+        } else {
+            echo "   ⚠️ Could not parse PR URL: ${prUrl}"
+            return null
+        }
+    } catch (Exception e) {
+        echo "   ❌ Error parsing PR URL: ${e.getMessage()}"
+        return null
+    }
 }
 
 def commentToPR(commentBody) {
