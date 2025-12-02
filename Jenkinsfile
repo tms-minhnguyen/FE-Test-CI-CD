@@ -19,6 +19,9 @@ pipeline {
                         echo "   PR Branch: ${env.CHANGE_BRANCH}"
                         echo "   Target Branch: ${env.CHANGE_TARGET}"
                         echo "   PR URL: ${env.CHANGE_URL}"
+                        
+                        // Create GitHub Check Run with "in_progress" status
+                        createGitHubCheckRun('in_progress', null, 'CI/CD pipeline started')
                     } else {
                         echo "🔵 Building FE for branch: ${env.BRANCH_NAME}"
                     }
@@ -216,8 +219,16 @@ pipeline {
                     echo "📤 Publishing test results to GitHub Checks..."
                     
                     try {
+                        def hasFailures = false
+                        def testSummary = "No test results found"
+                        
                         if (fileExists('test-results/junit.xml')) {
                             echo "✅ Found JUnit XML file, publishing to GitHub Checks..."
+                            
+                            // Parse JUnit XML to get test results
+                            def testResults = parseJUnitXml('test-results/junit.xml')
+                            hasFailures = testResults.failures > 0
+                            testSummary = "Total: ${testResults.total}, Passed: ${testResults.passed}, Failed: ${testResults.failures}"
                             
                             // Use Warnings Plugin to parse JUnit XML and publish to GitHub Checks
                             recordIssues(
@@ -246,10 +257,18 @@ pipeline {
                             echo "   Make sure Automation job generates JUnit XML file"
                         }
                         
+                        // Update GitHub Check Run with final status
+                        def conclusion = hasFailures ? 'failure' : 'success'
+                        def statusText = hasFailures ? 'Some tests failed' : 'All checks passed'
+                        updateGitHubCheckRun(conclusion, statusText, testSummary)
+                        
                     } catch (Exception e) {
                         echo "❌ Error publishing test results to GitHub Checks: ${e.getMessage()}"
                         echo "   Stack trace: ${e.getStackTrace().take(3).join('\n')}"
                         echo "   Continuing build..."
+                        
+                        // Update check run with error status
+                        updateGitHubCheckRun('failure', 'Error publishing test results', e.getMessage())
                     }
                 }
             }
@@ -263,6 +282,13 @@ pipeline {
                 echo "🏁 Build completed with status: ${status}"
                 if (env.CHANGE_ID) {
                     echo "   PR #${env.CHANGE_ID} - Branch: ${env.CHANGE_BRANCH}"
+                    
+                    // Update GitHub Check Run with final build status if not already updated
+                    if (!env.GITHUB_CHECK_UPDATED) {
+                        def conclusion = (status == 'SUCCESS') ? 'success' : 'failure'
+                        def statusText = (status == 'SUCCESS') ? 'Build completed successfully' : 'Build failed'
+                        updateGitHubCheckRun(conclusion, statusText, "Build status: ${status}")
+                    }
                 } else {
                     echo "   Branch: ${env.BRANCH_NAME}"
                 }
@@ -705,6 +731,206 @@ def escapeXml(String text) {
         .replace('>', '&gt;')
         .replace('"', '&quot;')
         .replace("'", '&apos;')
+}
+
+def createGitHubCheckRun(String status, String conclusion, String summary) {
+    if (!env.CHANGE_ID || !env.GITHUB_TOKEN) {
+        echo "⚠️ Missing PR info or GitHub token. Skipping GitHub Check creation."
+        return null
+    }
+    
+    try {
+        def repoOwner = env.GITHUB_REPO_OWNER
+        def repoName = env.GITHUB_REPO_NAME
+        def prSha = getPRHeadSha(env.CHANGE_ID)
+        
+        if (!prSha) {
+            echo "⚠️ Could not get PR head SHA. Skipping check run creation."
+            return null
+        }
+        
+        def checkRunData = [
+            name: 'continuous-integration/jenkins/pr-merge',
+            head_sha: prSha,
+            status: status,
+            output: [
+                title: status == 'in_progress' ? 'CI/CD pipeline is running' : 'CI/CD pipeline completed',
+                summary: summary ?: 'Checking code quality and running tests...'
+            ]
+        ]
+        
+        if (conclusion) {
+            checkRunData.conclusion = conclusion
+        }
+        
+        def jsonBody = groovy.json.JsonOutput.toJson(checkRunData)
+        
+        def response = sh(
+            script: """
+                curl -s -w "\\nHTTP_CODE:%{http_code}" -X POST \
+                    -H "Authorization: token ${env.GITHUB_TOKEN}" \
+                    -H "Accept: application/vnd.github.v3+json" \
+                    -H "Content-Type: application/json" \
+                    https://api.github.com/repos/${repoOwner}/${repoName}/check-runs \
+                    -d '${jsonBody}'
+            """,
+            returnStdout: true
+        ).trim()
+        
+        def httpCode = response.split('HTTP_CODE:')[1] ?: 'unknown'
+        def responseBody = response.split('HTTP_CODE:')[0] ?: ''
+        
+        if (httpCode == '201') {
+            def checkRun = new groovy.json.JsonSlurper().parseText(responseBody)
+            env.GITHUB_CHECK_RUN_ID = checkRun.id.toString()
+            echo "✅ GitHub Check Run created: ${checkRun.id}"
+            return checkRun.id
+        } else {
+            echo "⚠️ Failed to create check run: HTTP ${httpCode}"
+            echo "   Response: ${responseBody.take(500)}"
+            return null
+        }
+    } catch (Exception e) {
+        echo "❌ Error creating GitHub Check Run: ${e.getMessage()}"
+        return null
+    }
+}
+
+def updateGitHubCheckRun(String conclusion, String title, String summary) {
+    if (!env.CHANGE_ID || !env.GITHUB_TOKEN) {
+        echo "⚠️ Missing PR info or GitHub token. Skipping GitHub Check update."
+        return
+    }
+    
+    try {
+        def repoOwner = env.GITHUB_REPO_OWNER
+        def repoName = env.GITHUB_REPO_NAME
+        def prSha = getPRHeadSha(env.CHANGE_ID)
+        def checkRunId = env.GITHUB_CHECK_RUN_ID
+        
+        if (!prSha) {
+            echo "⚠️ Could not get PR head SHA. Skipping check run update."
+            return
+        }
+        
+        // If we don't have check run ID, try to find it by name
+        if (!checkRunId) {
+            checkRunId = findCheckRunId(prSha, 'continuous-integration/jenkins/pr-merge')
+        }
+        
+        if (!checkRunId) {
+            echo "⚠️ Could not find check run ID. Creating new check run..."
+            createGitHubCheckRun('completed', conclusion, summary)
+            env.GITHUB_CHECK_UPDATED = 'true'
+            return
+        }
+        
+        def checkRunData = [
+            status: 'completed',
+            conclusion: conclusion,
+            output: [
+                title: title,
+                summary: summary ?: 'CI/CD pipeline completed'
+            ]
+        ]
+        
+        def jsonBody = groovy.json.JsonOutput.toJson(checkRunData)
+        
+        def response = sh(
+            script: """
+                curl -s -w "\\nHTTP_CODE:%{http_code}" -X PATCH \
+                    -H "Authorization: token ${env.GITHUB_TOKEN}" \
+                    -H "Accept: application/vnd.github.v3+json" \
+                    -H "Content-Type: application/json" \
+                    https://api.github.com/repos/${repoOwner}/${repoName}/check-runs/${checkRunId} \
+                    -d '${jsonBody}'
+            """,
+            returnStdout: true
+        ).trim()
+        
+        def httpCode = response.split('HTTP_CODE:')[1] ?: 'unknown'
+        
+        if (httpCode == '200') {
+            echo "✅ GitHub Check Run updated: ${checkRunId} - ${conclusion}"
+            env.GITHUB_CHECK_UPDATED = 'true'
+        } else {
+            echo "⚠️ Failed to update check run: HTTP ${httpCode}"
+        }
+    } catch (Exception e) {
+        echo "❌ Error updating GitHub Check Run: ${e.getMessage()}"
+    }
+}
+
+def findCheckRunId(String sha, String checkName) {
+    try {
+        def repoOwner = env.GITHUB_REPO_OWNER
+        def repoName = env.GITHUB_REPO_NAME
+        
+        def response = sh(
+            script: """
+                curl -s -H "Authorization: token ${env.GITHUB_TOKEN}" \
+                    -H "Accept: application/vnd.github.v3+json" \
+                    https://api.github.com/repos/${repoOwner}/${repoName}/commits/${sha}/check-runs
+            """,
+            returnStdout: true
+        ).trim()
+        
+        def checkRuns = new groovy.json.JsonSlurper().parseText(response)
+        
+        if (checkRuns.check_runs) {
+            def checkRun = checkRuns.check_runs.find { it.name == checkName }
+            if (checkRun) {
+                return checkRun.id.toString()
+            }
+        }
+        
+        return null
+    } catch (Exception e) {
+        echo "⚠️ Error finding check run ID: ${e.getMessage()}"
+        return null
+    }
+}
+
+def parseJUnitXml(String xmlPath) {
+    def results = [
+        total: 0,
+        passed: 0,
+        failures: 0,
+        errors: 0
+    ]
+    
+    try {
+        if (!fileExists(xmlPath)) {
+            return results
+        }
+        
+        def xmlContent = readFile(xmlPath)
+        def xml = new XmlSlurper().parseText(xmlContent)
+        
+        xml.testsuite.each { suite ->
+            def tests = suite.@tests.toInteger() ?: 0
+            def failures = suite.@failures.toInteger() ?: 0
+            def errors = suite.@errors.toInteger() ?: 0
+            
+            results.total += tests
+            results.failures += failures
+            results.errors += errors
+            results.passed += (tests - failures - errors)
+        }
+        
+        // Also check testsuites level
+        if (xml.@tests) {
+            results.total = xml.@tests.toInteger() ?: results.total
+            results.failures = xml.@failures.toInteger() ?: results.failures
+            results.errors = xml.@errors.toInteger() ?: results.errors
+            results.passed = results.total - results.failures - results.errors
+        }
+        
+    } catch (Exception e) {
+        echo "⚠️ Error parsing JUnit XML: ${e.getMessage()}"
+    }
+    
+    return results
 }
 
 def commentToPR(commentBody) {
