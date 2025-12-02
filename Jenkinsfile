@@ -6,8 +6,8 @@ pipeline {
         PATH = "/Users/phinguyen/.nvm/versions/node/v20.19.6/bin:${env.PATH}"
         GITHUB_TOKEN = credentials('github-token')
         AUTOMATION_TEST_JOB = 'tmc-nocode-survey-autotest'
-        GITHUB_REPO_OWNER = 'TOMOSIA-VIETNAM'
-        GITHUB_REPO_NAME = 'nextjs-login-page'
+        GITHUB_REPO_OWNER = 'tms-minhnguyen'
+        GITHUB_REPO_NAME = 'FE-Test-CI-CD'
     }
 
     stages {
