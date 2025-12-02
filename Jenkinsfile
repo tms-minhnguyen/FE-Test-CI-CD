@@ -121,7 +121,14 @@ pipeline {
                             env.AUTOMATION_TEST_JOB_NAME = "${testJob.fullProjectName}"
                             
                             if (testResult == 'FAILURE') {
-                                echo "⚠️ Automation tests failed, but continuing to fetch and publish results..."
+                                echo "❌ Automation tests failed!"
+                                echo "   Test Job: ${testUrl}"
+                                echo "   This build will be marked as FAILURE"
+                                currentBuild.result = 'FAILURE'
+                            } else if (testResult == 'UNSTABLE') {
+                                echo "⚠️ Automation tests completed with warnings"
+                            } else if (testResult == 'SUCCESS') {
+                                echo "✅ All automation tests passed"
                             }
                             
                         } catch (Exception e) {
@@ -215,6 +222,25 @@ pipeline {
                 script {
                     echo "📤 Publishing test results to GitHub Checks..."
                     
+                    // Check if automation test job failed
+                    def automationTestFailed = false
+                    if (env.AUTOMATION_TEST_JOB_BUILD_NUMBER) {
+                        try {
+                            def testJobName = env.AUTOMATION_TEST_JOB_NAME ?: env.AUTOMATION_TEST_JOB
+                            def testBuildNumber = env.AUTOMATION_TEST_JOB_BUILD_NUMBER
+                            def testJob = Jenkins.instance.getItemByFullName(testJobName)
+                            if (testJob) {
+                                def testBuild = testJob.getBuildByNumber(testBuildNumber.toInteger())
+                                if (testBuild && testBuild.result == hudson.model.Result.FAILURE) {
+                                    automationTestFailed = true
+                                    echo "❌ Automation test job failed - this build will be marked as FAILURE"
+                                }
+                            }
+                        } catch (Exception e) {
+                            echo "⚠️ Could not check automation test job status: ${e.getMessage()}"
+                        }
+                    }
+                    
                     try {
                         if (fileExists('test-results/junit.xml')) {
                             echo "✅ Found JUnit XML file, publishing to GitHub Checks..."
@@ -246,10 +272,25 @@ pipeline {
                             echo "   Make sure Automation job generates JUnit XML file"
                         }
                         
+                        // Fail build if automation tests failed
+                        if (automationTestFailed) {
+                            echo "❌ Failing build due to automation test failures"
+                            currentBuild.result = 'FAILURE'
+                            error("Automation tests failed - see ${env.JENKINS_URL}job/${env.AUTOMATION_TEST_JOB_NAME}/${env.AUTOMATION_TEST_JOB_BUILD_NUMBER}/")
+                        }
+                        
                     } catch (Exception e) {
                         echo "❌ Error publishing test results to GitHub Checks: ${e.getMessage()}"
                         echo "   Stack trace: ${e.getStackTrace().take(3).join('\n')}"
-                        echo "   Continuing build..."
+                        
+                        // If automation test failed, still fail the build
+                        if (automationTestFailed) {
+                            echo "❌ Failing build due to automation test failures"
+                            currentBuild.result = 'FAILURE'
+                            error("Automation tests failed - see ${env.JENKINS_URL}job/${env.AUTOMATION_TEST_JOB_NAME}/${env.AUTOMATION_TEST_JOB_BUILD_NUMBER}/")
+                        } else {
+                            echo "   Continuing build..."
+                        }
                     }
                 }
             }
