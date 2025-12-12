@@ -35,7 +35,7 @@ const Signup: React.FC = () => {
             </p>
           </>
         ) : (
-          <AuthForm mode="Login" onSubmit={handleSignup} />
+          <AuthForm mode="Signup" onSubmit={handleSignup} />
         )}
         {message && (
           <p
